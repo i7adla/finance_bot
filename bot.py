@@ -1,0 +1,148 @@
+import logging
+import datetime
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+
+from dotenv import load_dotenv
+import os
+
+# Загружаем переменные из .env
+load_dotenv()
+
+# Получаем токен
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# Логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
+# Обработчик команды /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="Привет! Отправь данные о финансовой операции в формате:\nСУММА КАТЕГОРИЯ ОПИСАНИЕ\n(Пример: 500 еда обед)\n\nКатегории регистронезависимы. Используй:\n• /sum — чтобы посчитать расходы за сегодня\n• /category — чтобы увидеть все категории\n• /help — чтобы увидеть список команд"
+    )
+
+# Обработчик команды /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "📌 *Доступные команды:*\n\n"
+"• /start — приветственное сообщение\n"
+"• /help — список всех команд\n"
+"• /sum — общая сумма расходов за сегодня\n"
+"• /category — список всех уникальных категорий\n\n"
+"📌 *Формат ввода для операций:*\n"
+"СУММА КАТЕГОРИЯ ОПИСАНИЕ\n"
+"Пример: `1000 еда ужин`\n"
+"Категории регистронезависимы: 'еда', 'Еда', 'ЕДА' — это одно и то же\\."
+    )
+    await update.message.reply_text(help_text, parse_mode='MarkdownV2')
+
+# Обработчик текстовых сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user_id = update.effective_user.id  # Получаем ID пользователя
+        data = update.message.text.split(maxsplit=2)
+        if len(data) != 3:
+            raise ValueError("Неверный формат. Используйте: СУММА КАТЕГОРИЯ ОПИСАНИЕ")
+
+        amount, category, description = data
+
+        category = category.strip().lower()
+
+        with open("finance_records.txt", "a", encoding="utf-8") as file:
+            file.write(f"{now} | {user_id} | {amount} | {category} | {description}\n")
+
+        await update.message.reply_text("✅ Запись успешно добавлена!")
+
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+        
+# Обработчик команды /sum
+async def sum_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        today = datetime.date.today()
+        user_id = update.effective_user.id  # Получаем ID текущего пользователя
+        total = 0.0
+        found = False
+
+        try:
+            with open("finance_records.txt", "r", encoding="utf-8") as file:
+                for line in file:
+                    if line.startswith(today.strftime("%Y-%m-%d")):
+                        parts = line.strip().split(" | ")
+                        if len(parts) >= 5:
+                            record_user_id = parts[1].strip()
+                            amount_str = parts[2].strip()
+                            if record_user_id == str(user_id):
+                                try:
+                                    total += float(amount_str)
+                                    found = True
+                                except ValueError:
+                                    continue
+        except FileNotFoundError:
+            await update.message.reply_text("⚠️ Файл записей не найден.")
+            return
+
+        if found:
+            await update.message.reply_text(f"💰 Общая сумма расходов за сегодня: **{total:.2f}**")
+        else:
+            await update.message.reply_text("📊 За сегодня ещё нет записей.")
+
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text("❌ Произошла ошибка при подсчёте суммы.")
+
+# Обработчик команды /category
+async def list_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        categories = set()
+
+        try:
+            with open("finance_records.txt", "r", encoding="utf-8") as file:
+                for line in file:
+                    parts = line.strip().split(" | ")
+                    if len(parts) >= 5:
+                        record_user_id = parts[1].strip()
+                        if record_user_id == str(user_id):
+                            category = parts[3].strip().lower()
+                            categories.add(category)
+        except FileNotFoundError:
+            await update.message.reply_text("⚠️ Файл записей не найден.")
+            return
+
+        if categories:
+            sorted_categories = sorted(categories)
+            categories_list = "\n• ".join(sorted_categories)
+            await update.message.reply_text(f"📋 Все категории:\n• {categories_list}")
+        else:
+            await update.message.reply_text("📊 Категории пока не добавлены.")
+
+    except Exception as e:
+        logging.error(e)
+        await update.message.reply_text("❌ Произошла ошибка при чтении категорий.")
+
+# Основная функция запуска бота
+if __name__ == '__main__':
+    application = ApplicationBuilder().token('7602986144:AAHyQmZW4rQVmTYqik2YPfI0FdDUO4Hr1WM').build()
+
+    # Регистрация обработчиков
+    start_handler = CommandHandler('start', start)
+    help_handler = CommandHandler('help', help_command)
+    message_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
+    sum_handler = CommandHandler('sum', sum_today)
+    category_handler = CommandHandler('category', list_categories)
+
+    application.add_handler(start_handler)
+    application.add_handler(help_handler)
+    application.add_handler(message_handler)
+    application.add_handler(sum_handler)
+    application.add_handler(category_handler)
+
+    print("Бот запущен...")
+    application.run_polling()
