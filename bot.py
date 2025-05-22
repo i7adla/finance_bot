@@ -1,3 +1,5 @@
+#!/root/venv/bin/python
+
 import logging
 import datetime
 from telegram import Update
